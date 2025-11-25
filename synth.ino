@@ -4,10 +4,16 @@
 #include <CircularBuffer.hpp>
 
 #include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
 #include <Adafruit_MCP23X17.h>
+#include <TM1637DisplayMCP.h>
+
+#include <HT16K33Disp.h>
+
 
 #include <MCPKeypad.h>
-#include <LiquidCrystal.h>
+#include <SynthList.h>
 
 #include "PianoKey.h"
 
@@ -27,14 +33,20 @@
 #define I2S_BCLK 4
 #define I2S_DIN 16
 
-#define SIG_PIN 12
+#define SIG_PIN 13
 #define MUX0_PIN 25
 #define MUX1_PIN 26
 #define MUX2_PIN 27
 #define MUX3_PIN 14
-#define SET_PIN 33
-
 CD74HC4067 mux_a(MUX0_PIN, MUX1_PIN, MUX2_PIN, MUX3_PIN);
+
+#define SIGB_PIN 35
+#define MUXB0_PIN 5
+#define MUXB1_PIN 18
+#define MUXB2_PIN 33
+#define MUXB3_PIN 32
+CD74HC4067 mux_b(MUXB0_PIN, MUXB1_PIN, MUXB2_PIN, MUXB3_PIN);
+
 
 Adafruit_MCP23X17 mcp;
 
@@ -52,55 +64,72 @@ byte rowPins[ROWS] = { 3, 2, 1, 0 };  //connect to the row pinouts of the keypad
 byte colPins[COLS] = { 7, 6, 5, 4 };  //connect to the column pinouts of the keypad
 
 MCPKeypad keypad = MCPKeypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS, &mcp);
-CircularBuffer<char, 5> keyPresses;
 
-const int rs = 9, en = 10, d4 = 11, d5 = 12, d6 = 13, d7 = 14;
-LiquidCrystal lcd(rs, en, d4, d5, d6, d7, &mcp);
+CircularBuffer<char, 3> keyPresses;
 
-float current_volume = 1.0;
+LiquidCrystal_I2C lcd(0x26, 16, 2);  // set the LCD address to 0x27 for a 16 chars and 2 line display
 
-int numVoices = 4;
+// TM1637DisplayMCP digitDisplay(8, 9, &mcp);
+
+String currentFDText = "P256";
+HT16K33Disp fdDisplay;
+
+
+int numVoices = 2;
 int current_patch = 256;
 
-int sval = 0;
+float max_velocity = 10.0;
+float current_volume = 1.0;
+
+byte keypadCounter = 0;
 
 
-int last_val = 0;
-int note_on = 0;
 
 #define NORMAL 1
 #define DRUM 10
 
 int MODE = NORMAL;
 
-#define NOTE_ON 3
-#define NOTE_ASCENDING 2
-#define NOTE_DESCENDING 1
-#define NOTE_OFF 0
 
 
 long current_micros;
 
 
-#define TOTAL_SENSORS 16
+#define TOTAL_SENSORS 30
 
 PianoKey *pianoKeys[TOTAL_SENSORS] = {
-  new PianoKey(0, 59, 0),
-  new PianoKey(1, 60, 1),
-  new PianoKey(2, 61, 0),
-  new PianoKey(3, 62, 0),
-  new PianoKey(4, 63, 1),
-  new PianoKey(5, 64, 0),
-  new PianoKey(6, 65, 0),
-  new PianoKey(7, 66, 0),
-  new PianoKey(8, 67, 1),
-  new PianoKey(9, 68, 0),
-  new PianoKey(10, 69, 0),
-  new PianoKey(11, 70, 0),
-  new PianoKey(12, 71, 1),
-  new PianoKey(13, 72, 0),
-  new PianoKey(14, 73, 0),
-  new PianoKey(15, 74, 0),
+  new PianoKey(0, 59, 0, 0, 350.0, 1),
+  new PianoKey(1, 60, 1, 0, 600.0, 2),
+  new PianoKey(2, 61, 0, 0, 900.0, 5),
+  new PianoKey(3, 62, 0, 0, 450.0, 1),
+  new PianoKey(4, 63, 1, 0, 450.0, 1),
+  new PianoKey(5, 64, 0, 0, 350.0, 1),
+  new PianoKey(6, 65, 0, 0, 800.0, 3),
+  new PianoKey(7, 66, 0, 0, 200.0, 1),
+  new PianoKey(8, 67, 1, 0, 300.0, 1),
+  new PianoKey(9, 68, 0, 0, 350.0, 1),
+  new PianoKey(10, 69, 0, 0, 350.0, 1),
+  new PianoKey(11, 70, 0, 0, 300.0, 1),
+  new PianoKey(12, 71, 1, 0, 400.0, 1),
+  new PianoKey(13, 72, 0, 0, 500.0, 1),
+  new PianoKey(14, 73, 0, 0, 400.0, 2),
+  new PianoKey(15, 74, 0, 0, 400.0, 3),
+
+  new PianoKey(0, 58, 0, 0, 300.0, 1),
+  new PianoKey(1, 57, 1, 0, 600.0, 1),
+  new PianoKey(2, 56, 0, 0, 400.0, 1),
+  new PianoKey(3, 55, 0, 0, 500.0, 2),
+  new PianoKey(4, 54, 1, 0, 600.0, 3),
+  new PianoKey(5, 53, 0, 0, 300.0, 1),
+  new PianoKey(6, 52, 0, 0, 350.0, 1),
+  new PianoKey(7, 51, 0, 0, 300.0, 1),
+  new PianoKey(8, 50, 1, 0, 300.0, 1),
+  new PianoKey(9, 49, 0, 0, 500.0, 7),
+  new PianoKey(10, 48, 0, 0, 300.0, 1),
+  new PianoKey(11, 47, 0, 0, 500.0, 8),
+  new PianoKey(12, 46, 1, 0, 400.0, 1),
+  new PianoKey(13, 45, 0, 0, 350.0, 4),
+
 };
 
 // crashing patches: 60, 32
@@ -120,14 +149,15 @@ void setup() {
   pinMode(MUX1_PIN, OUTPUT);
   pinMode(MUX2_PIN, OUTPUT);
   pinMode(MUX3_PIN, OUTPUT);
+  pinMode(SIG_PIN, INPUT);
 
-  pinMode(SET_PIN, OUTPUT);
-  digitalWrite(SET_PIN, LOW);
 
-  // pinMode(S1, INPUT);
-  // for (int i = 0; i < TOTAL; i++) {
-  //   pinMode(btns[i], INPUT);
-  // }
+  pinMode(MUXB0_PIN, OUTPUT);
+  pinMode(MUXB1_PIN, OUTPUT);
+  pinMode(MUXB2_PIN, OUTPUT);
+  pinMode(MUXB3_PIN, OUTPUT);
+  pinMode(SIGB_PIN, INPUT);
+
   delay(1000);  // Give some time for the I2C bus to stabilize
 
   if (!Wire.begin(21, 22)) {
@@ -139,7 +169,7 @@ void setup() {
   }
   delay(1000);  // Give some time for the I2C bus to stabilize
 
-  // Initialize the first MCP23017 using I2C with address 0x20
+  // // Initialize the first MCP23017 using I2C with address 0x20
   Log.info("Initializing MCP23017 at address 0x27..." CR);
   if (!mcp.begin_I2C(0x27, &Wire)) {
     Log.error("Error initializing MCP23017 at address 0x27." CR);
@@ -148,29 +178,34 @@ void setup() {
   } else {
     Log.info("Successfully initialized MCP23017 at address 0x27." CR);
   }
-
-  // Configure all pins of both MCP23017s as outputs and turn off all relays initially
-  // for (uint8_t pin = 0; pin < 16; pin++) {
-  //   mcp.pinMode(pin, OUTPUT);
-  //   mcp.digitalWrite(pin, HIGH);  // Ensure relays are off initially (HIGH for low-level trigger relays)
-  // }
   delay(1000);
+
+  lcd.init();
+  lcd.backlight();
+
+  // digitDisplay.init();
+  // digitDisplay.setBrightness(5);
+
+  updateLCD();
+
+  fdDisplay.Init(0x70, 9);
+  fdDisplay.Text(0x70, "P256");
+
   current_micros = micros();
 
 
   keypad.begin();
 
-  // lcd.begin(16, 2);
-  // lcd.print("Hello World");
-
   amy_config_t amy_config = amy_default_config();
   amy_config.features.startup_bleep = 1;
-  amy_config.features.default_synths = 1;
+  amy_config.features.default_synths = 0;
   amy_config.i2s_bclk = I2S_BCLK;
   amy_config.i2s_lrc = I2S_LRC;
   amy_config.i2s_dout = I2S_DIN;
-  amy_config.features.chorus = 2;
-  amy_config.features.reverb = 3;
+  amy_config.features.echo = 0;
+  amy_config.features.reverb = 0;
+  amy_config.features.chorus = 0;
+
   amy_start(amy_config);
   amy_live_start();
 
@@ -178,14 +213,87 @@ void setup() {
 }
 
 
-void initialize_notes() {
-  //  Serial.println("Amy Test Sequencer");
+void scanI2C() {
+  byte error, address;
+  int nDevices;
 
+  Serial.println("Scanning...");
+
+  nDevices = 0;
+  for (address = 1; address < 127; address++) {
+    // The i2c_scanner uses the return value of
+    // the Write.endTransmisstion to see if
+    // a device did acknowledge to the address.
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+
+    if (error == 0) {
+      Serial.print("I2C device found at address 0x");
+      if (address < 16)
+        Serial.print("0");
+      Serial.print(address, HEX);
+      Serial.println("  !");
+
+      nDevices++;
+    } else if (error == 4) {
+      Serial.print("Unknown error at address 0x");
+      if (address < 16)
+        Serial.print("0");
+      Serial.println(address, HEX);
+    }
+  }
+  if (nDevices == 0)
+    Serial.println("No I2C devices found\n");
+  else
+    Serial.println("done\n");
+}
+
+void initialize_notes() {
   amy_event e = amy_default_event();
   e.patch_number = current_patch;
-  e.synth = NORMAL;
+  e.synth = 1;
   e.num_voices = numVoices;
   amy_add_event(&e);
+}
+
+void updateLCD() {
+
+  // int switchVal = mcp.digitalRead(10);
+  // Log.info("Switch Value is: %d " CR, switchVal);
+
+  lcd.setCursor(0, 0);
+  String space = "   ";
+  String cp = String("Patch: ");
+  String pn = String(current_patch);
+  cp.concat(pn);
+  cp.concat(space);
+  lcd.print(cp);
+
+  // lcd.setCursor(0, 1);
+  // String kpStr = String();
+  // for(int i = 0; i < keyPresses.size(); i++) {
+  //   kpStr.concat(keyPresses[i]);
+  // }
+  // kpStr.concat(space);
+  // lcd.print(kpStr);
+
+
+//  digitDisplay.showNumberDec(current_patch, false);
+
+  String fdS = "P";
+  fdS.concat(current_patch);
+
+  if (fdS != currentFDText) {
+    currentFDText = fdS;
+    fdDisplay.Clear(0x70);
+    fdDisplay.Text(0x70, fdS);
+
+    String currentSynthName = synthList[current_patch];
+    Log.info("Current patch name: %s" CR, currentSynthName.c_str());
+    lcd.setCursor(0, 1);
+    lcd.print(currentSynthName);
+
+  }
 }
 
 void updatePatchFromKeys() {
@@ -211,11 +319,12 @@ void updatePatch(String value) {
     e.synth = 1;
     e.num_voices = numVoices;
     amy_add_event(&e);
-
+    updateLCD();
   } else {
     Log.warning("Invalid patch %s" CR, value);
   }
 }
+
 
 void updateLogLevel(String value) {
   int level = value.toInt();
@@ -265,6 +374,25 @@ void readSerial() {
   }
 }
 
+
+void updateKeyDebug() {
+  String kpStr = String();
+  while (keyPresses.size()) {
+    if (keyPresses.size() > 3) {
+      keyPresses.shift();
+    } else {
+      kpStr.concat(keyPresses.shift());
+    }
+  }
+  int keyNum = kpStr.toInt();
+  if (keyNum > -1 && keyNum < TOTAL_SENSORS) {
+    Log.info("Will toggle debug for key %d" CR, keyNum);
+    PianoKey *key = pianoKeys[keyNum];
+    if (key->debug > 0) key->debug = 0;
+    else key->debug = 1;
+  }
+}
+
 void readKeyboard() {
   keypad.tick();
   while (keypad.available()) {
@@ -279,28 +407,35 @@ void readKeyboard() {
       switch (k) {
         case 'E':
           updatePatchFromKeys();
-
+          break;
+        case 'D':
+          updateKeyDebug();
           break;
         default:
           keyPresses.push(k);
           break;
       }
     }
+    updateLCD();
   }
 }
 
 void updateButtons() {
-
-  readSerial();
-  readKeyboard();
   readPiano();
+
+  if (keypadCounter++ > 50) {
+    readSerial();
+    readKeyboard();
+    keypadCounter = 0;
+  }
 }
 
 void playNote(byte note, float velocity) {
-  float play_velocity = velocity / 2.0;
+  float play_velocity = (velocity / MAX_PIANO_KEY_FORCE) * max_velocity;
   Log.info("Playing note %d %F" CR, note, play_velocity);
   amy_event e = amy_default_event();
   e.velocity = play_velocity;
+  e.volume = current_volume;
   e.midi_note = note;
   e.synth = 1;
   amy_add_event(&e);
@@ -321,27 +456,37 @@ void readPiano() {
   long elapsed;
   int pressure = 0;
 
+  int pinToRead = SIG_PIN;
+
   for (int i = 0; i < TOTAL_SENSORS; i++) {
     PianoKey *key = pianoKeys[i];
 
-    mux_a.channel(key->channel);
-    pressure = map(analogRead(SIG_PIN), 0, 4095, 0, 20);
-    byte old_state = key->state;
-
-    if (pressure == 0) {
-      key->clear();
+    if (i < 16) {
+      mux_a.channel(key->channel);
+      pinToRead = SIG_PIN;
+    } else {
+      pinToRead = SIGB_PIN;
+      mux_b.channel(key->channel);
     }
+
+    pressure = map(analogRead(pinToRead), 0, 4095, 0, 20);
 
     if (pressure != key->last_pressure) {
-      key->step(pressure, now);
-    }
+      byte old_state = key->state;
 
-    byte new_state = key->state;
-    if (new_state != old_state) {
-      if (new_state == KEY_SOUND) {
-        playNote(key->note, key->peak_force);
-      } else if (new_state == KEY_OFF) {
-        stopNote(key->note);
+      if (pressure == 0) {
+        key->clear();
+      }
+
+      key->step(pressure, now);
+
+      byte new_state = key->state;
+      if (new_state != old_state) {
+        if (new_state == KEY_SOUND) {
+          playNote(key->note, key->peak_force);
+        } else if (new_state == KEY_OFF) {
+          stopNote(key->note);
+        }
       }
     }
   }

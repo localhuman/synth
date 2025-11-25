@@ -8,18 +8,24 @@
 #define KEY_SOUND 2
 #define KEY_UNSET 3
 
-#define PLAY_THRESHOLD 0.7
+#define PLAY_THRESHOLD 0.3
 
-#define MAX_FORCE 20.0
+#define MAX_PIANO_KEY_FORCE 20.0
+
 
 #pragma once
+
 class PianoKey {
 
 public:
-  PianoKey(byte channel_, byte note_, byte sharp_) {
-    channel = channel_;
-    note = note_;
-    sharp = sharp_;
+  PianoKey(byte _channel, byte _note, byte _sharp, byte _debug, float _sensitivity, byte _baseline) {
+    channel = _channel;
+    note = _note;
+    sharp = _sharp;
+    debug = _debug;
+    sensitivity = _sensitivity;
+    baseline = _baseline;
+    baselinePlus2 = baseline+2;
     state = KEY_OFF;
 
   }
@@ -43,7 +49,7 @@ public:
   }
 
   float velocity() {
-    return 50.0* pressure_delta() / touch_elapsed();
+    return sensitivity * pressure_delta() / touch_elapsed();
   }
 
   float force() {
@@ -51,6 +57,9 @@ public:
   }
  
   void step(byte pressure, long time) {
+      if(pressure < baseline) {
+        return;
+      }
       long elapsed = 0;
       if(last_time != 0) {
         elapsed = time - last_time;
@@ -63,19 +72,21 @@ public:
       float current_velocity = velocity();
       float current_force = force();
 
-      // Log.verbose("%d: new pressure for note %d :%d %l" CR, channel, note, last_pressure, elapsed);
-      // Log.verbose("%d: velocity: %F %F" CR, channel, current_velocity, current_force);
+      if(debug && pressure > baselinePlus2) {
+        Log.info("%d: new pressure for note %d :%d %l" CR, channel, note, last_pressure, elapsed);
+        Log.info("%d: velocity: %F %F" CR, channel, current_velocity, current_force);
+      }
 
       switch(state) {
         case KEY_OFF:
-          if(current_force > PLAY_THRESHOLD && pressure > 2) {
+          if(current_force > PLAY_THRESHOLD && pressure > baselinePlus2) {
             updateState(KEY_WILL_SOUND);
           }
           break;        
 
         case KEY_WILL_SOUND:
           if(current_force < last_force) {
-            peak_force = last_force < MAX_FORCE ? last_force : MAX_FORCE;
+            peak_force = last_force < MAX_PIANO_KEY_FORCE ? last_force : MAX_PIANO_KEY_FORCE;
             peak_pressure = pressure;
             updateState(KEY_SOUND);
           }
@@ -87,7 +98,8 @@ public:
 
         case KEY_UNSET:
           int oneThirdPressure = peak_pressure / 4;
-          if(pressure <= oneThirdPressure) {
+          byte min = baselinePlus2;
+          if(pressure <= oneThirdPressure || pressure < baselinePlus2) {
             updateState(KEY_OFF);
           }
           break;
@@ -101,16 +113,8 @@ public:
 
 
   void updateState(byte newState) {
-//    Log.info("%d Changed state from %d to %d" CR, note, state, newState);
-
     if(newState != state) {
       state = newState;
-
-      // if(state == KEY_SOUND) {
-      //   Log.info("%d Sound note with velocity: %F" CR, note, peak_force);
-      // } else if(state == KEY_OFF) {
-
-      // }
     }
   }
 
@@ -143,4 +147,10 @@ public:
   byte note;
   byte sharp;
   byte state;
+
+  byte debug;
+  float sensitivity;
+
+  byte baseline;
+  byte baselinePlus2;
 };
