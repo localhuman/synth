@@ -29,23 +29,30 @@
 // Electrosmith Daisy
 // Please see https://github.com/shorepine/amy/issues/354 for the full list
 
-#define I2S_LRC 17
-#define I2S_BCLK 4
-#define I2S_DIN 16
+#define I2S_LRC 1
+#define I2S_BCLK 2
+#define I2S_DIN 42
 
-#define SIG_PIN 13
-#define MUX0_PIN 25
-#define MUX1_PIN 26
-#define MUX2_PIN 27
-#define MUX3_PIN 14
+#define SIG_PIN 4
+#define MUX0_PIN 15
+#define MUX1_PIN 7
+#define MUX2_PIN 6
+#define MUX3_PIN 5
 CD74HC4067 mux_a(MUX0_PIN, MUX1_PIN, MUX2_PIN, MUX3_PIN);
 
-#define SIGB_PIN 35
-#define MUXB0_PIN 5
-#define MUXB1_PIN 18
-#define MUXB2_PIN 33
-#define MUXB3_PIN 32
+#define SIGB_PIN 16
+#define MUXB0_PIN 18
+#define MUXB1_PIN 17
+#define MUXB2_PIN 39
+#define MUXB3_PIN 40
 CD74HC4067 mux_b(MUXB0_PIN, MUXB1_PIN, MUXB2_PIN, MUXB3_PIN);
+
+// #define SIGC_PIN 10
+// #define MUXC0_PIN 17
+// #define MUXC1_PIN 18
+// #define MUXC2_PIN 8
+// #define MUXC3_PIN 3
+// CD74HC4067 mux_c(MUXC0_PIN, MUXC1_PIN, MUXC2_PIN, MUXC3_PIN);
 
 
 Adafruit_MCP23X17 mcp;
@@ -75,7 +82,7 @@ String currentFDText = "P256";
 HT16K33Disp fdDisplay;
 
 
-int numVoices = 2;
+int numVoices = 6;
 int current_patch = 256;
 
 float max_velocity = 10.0;
@@ -90,8 +97,6 @@ byte keypadCounter = 0;
 
 int MODE = NORMAL;
 
-
-
 long current_micros;
 
 
@@ -100,7 +105,7 @@ long current_micros;
 PianoKey *pianoKeys[TOTAL_SENSORS] = {
   new PianoKey(0, 59, 0, 0, 350.0, 1),
   new PianoKey(1, 60, 1, 0, 600.0, 2),
-  new PianoKey(2, 61, 0, 0, 900.0, 5),
+  new PianoKey(2, 61, 0, 0, 500.0, 7),
   new PianoKey(3, 62, 0, 0, 450.0, 1),
   new PianoKey(4, 63, 1, 0, 450.0, 1),
   new PianoKey(5, 64, 0, 0, 350.0, 1),
@@ -109,11 +114,11 @@ PianoKey *pianoKeys[TOTAL_SENSORS] = {
   new PianoKey(8, 67, 1, 0, 300.0, 1),
   new PianoKey(9, 68, 0, 0, 350.0, 1),
   new PianoKey(10, 69, 0, 0, 350.0, 1),
-  new PianoKey(11, 70, 0, 0, 300.0, 1),
+  new PianoKey(11, 70, 0, 0, 300.0, 5),
   new PianoKey(12, 71, 1, 0, 400.0, 1),
   new PianoKey(13, 72, 0, 0, 500.0, 1),
   new PianoKey(14, 73, 0, 0, 400.0, 2),
-  new PianoKey(15, 74, 0, 0, 400.0, 3),
+  new PianoKey(15, 74, 0, 0, 900.0, 3),
 
   new PianoKey(0, 58, 0, 0, 300.0, 1),
   new PianoKey(1, 57, 1, 0, 600.0, 1),
@@ -124,11 +129,11 @@ PianoKey *pianoKeys[TOTAL_SENSORS] = {
   new PianoKey(6, 52, 0, 0, 350.0, 1),
   new PianoKey(7, 51, 0, 0, 300.0, 1),
   new PianoKey(8, 50, 1, 0, 300.0, 1),
-  new PianoKey(9, 49, 0, 0, 500.0, 7),
+  new PianoKey(9, 49, 0, 0, 500.0, 8),
   new PianoKey(10, 48, 0, 0, 300.0, 1),
   new PianoKey(11, 47, 0, 0, 500.0, 8),
   new PianoKey(12, 46, 1, 0, 400.0, 1),
-  new PianoKey(13, 45, 0, 0, 350.0, 4),
+  new PianoKey(13, 45, 0, 0, 350.0, 6),
 
 };
 
@@ -151,18 +156,17 @@ void setup() {
   pinMode(MUX3_PIN, OUTPUT);
   pinMode(SIG_PIN, INPUT);
 
-
   pinMode(MUXB0_PIN, OUTPUT);
   pinMode(MUXB1_PIN, OUTPUT);
   pinMode(MUXB2_PIN, OUTPUT);
   pinMode(MUXB3_PIN, OUTPUT);
   pinMode(SIGB_PIN, INPUT);
 
-  delay(1000);  // Give some time for the I2C bus to stabilize
 
-  if (!Wire.begin(21, 22)) {
+  if (!Wire.begin(14, 13)) {
     Log.info("Initializing Wire library error....." CR);
     while (1)
+
       ;
   } else {
     Log.info("Initialized Wire Library" CR);
@@ -183,8 +187,8 @@ void setup() {
   lcd.init();
   lcd.backlight();
 
-  // digitDisplay.init();
-  // digitDisplay.setBrightness(5);
+  // // digitDisplay.init();
+  // // digitDisplay.setBrightness(5);
 
   updateLCD();
 
@@ -203,13 +207,15 @@ void setup() {
   amy_config.i2s_lrc = I2S_LRC;
   amy_config.i2s_dout = I2S_DIN;
   amy_config.features.echo = 0;
-  amy_config.features.reverb = 0;
-  amy_config.features.chorus = 0;
+  amy_config.features.reverb = 1;
+  amy_config.features.chorus = 1;
 
   amy_start(amy_config);
   amy_live_start();
 
   initialize_notes();
+  scanI2C();
+  Log.info("Initialized!");
 }
 
 
@@ -311,7 +317,7 @@ void updatePatchFromKeys() {
 
 void updatePatch(String value) {
   int newPatch = value.toInt();
-  if (newPatch > 0 && newPatch <= 256) {
+  if (newPatch >= 0 && newPatch <= 256) {
     current_patch = newPatch;
     Log.info("Setting patch to %d" CR, newPatch);
     amy_event e = amy_default_event();
@@ -426,6 +432,7 @@ void updateButtons() {
   if (keypadCounter++ > 50) {
     readSerial();
     readKeyboard();
+//    readPots();
     keypadCounter = 0;
   }
 }
@@ -492,6 +499,15 @@ void readPiano() {
   }
 }
 
+int current_octave = 4;
+void readPots() {
+  // mux_c.channel(0);
+  // int octave = map(analogRead(SIGC_PIN), 0, 4095, 0, 7);
+  // if(octave != current_octave) {
+  //   current_octave = octave;
+  //   Log.info("Changing octave to %d " CR, octave);
+  // }
+}
 
 void loop() {
   updateButtons();
