@@ -1,3 +1,4 @@
+
 #include <AMY-Arduino.h>
 #include <ArduinoLog.h>
 #include <CD74HC4067.h>
@@ -14,6 +15,7 @@
 
 #include <MCPKeypad.h>
 #include <SynthList.h>
+#include <Recorder.h>
 
 #include "PianoKey.h"
 
@@ -29,30 +31,30 @@
 // Electrosmith Daisy
 // Please see https://github.com/shorepine/amy/issues/354 for the full list
 
-#define I2S_LRC 1
-#define I2S_BCLK 2
-#define I2S_DIN 42
+#define I2S_LRC 29
+#define I2S_BCLK 30
+#define I2S_DIN 31
 
-#define SIG_PIN 4
-#define MUX0_PIN 15
-#define MUX1_PIN 7
-#define MUX2_PIN 6
+#define SIG_PIN 20
+#define MUX0_PIN 2
+#define MUX1_PIN 3
+#define MUX2_PIN 4
 #define MUX3_PIN 5
 CD74HC4067 mux_a(MUX0_PIN, MUX1_PIN, MUX2_PIN, MUX3_PIN);
 
-#define SIGB_PIN 16
-#define MUXB0_PIN 18
-#define MUXB1_PIN 17
-#define MUXB2_PIN 39
-#define MUXB3_PIN 40
+#define SIGB_PIN 52
+#define MUXB0_PIN 49
+#define MUXB1_PIN 50
+#define MUXB2_PIN 28
+#define MUXB3_PIN 51
 CD74HC4067 mux_b(MUXB0_PIN, MUXB1_PIN, MUXB2_PIN, MUXB3_PIN);
 
-// #define SIGC_PIN 10
-// #define MUXC0_PIN 17
-// #define MUXC1_PIN 18
-// #define MUXC2_PIN 8
-// #define MUXC3_PIN 3
-// CD74HC4067 mux_c(MUXC0_PIN, MUXC1_PIN, MUXC2_PIN, MUXC3_PIN);
+#define SIGC_PIN 21
+#define MUXC0_PIN 27
+#define MUXC1_PIN 26
+#define MUXC2_PIN 23
+#define MUXC3_PIN 22
+CD74HC4067 mux_c(MUXC0_PIN, MUXC1_PIN, MUXC2_PIN, MUXC3_PIN);
 
 
 Adafruit_MCP23X17 mcp;
@@ -72,6 +74,7 @@ byte colPins[COLS] = { 7, 6, 5, 4 };  //connect to the column pinouts of the key
 
 MCPKeypad keypad = MCPKeypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS, &mcp);
 
+CircularBuffer<char, 3> keysPressed;
 CircularBuffer<char, 3> keyPresses;
 
 LiquidCrystal_I2C lcd(0x26, 16, 2);  // set the LCD address to 0x27 for a 16 chars and 2 line display
@@ -82,11 +85,26 @@ String currentFDText = "P256";
 HT16K33Disp fdDisplay;
 
 
-int numVoices = 6;
+int numVoices = 10;
 int current_patch = 256;
 
 float max_velocity = 10.0;
+
+#define POTREAD_COUNT 20
+#define POTREAD_DELAY 10
+
 float current_volume = 1.0;
+CircularBuffer<int, POTREAD_COUNT> vol_avg;
+
+float eq_l = 0.0;
+float eq_m = 0.0;
+float eq_h = 0.0;
+CircularBuffer<int, POTREAD_COUNT> eql_avg;
+CircularBuffer<int, POTREAD_COUNT> eqm_avg;
+CircularBuffer<int, POTREAD_COUNT> eqh_avg;
+
+int octave = 0;
+CircularBuffer<int, POTREAD_COUNT> oct_avg;
 
 byte keypadCounter = 0;
 
@@ -100,16 +118,18 @@ int MODE = NORMAL;
 long current_micros;
 
 
+
+
 #define TOTAL_SENSORS 30
 
 PianoKey *pianoKeys[TOTAL_SENSORS] = {
   new PianoKey(0, 59, 0, 0, 350.0, 1),
-  new PianoKey(1, 60, 1, 0, 600.0, 2),
-  new PianoKey(2, 61, 0, 0, 500.0, 7),
+  new PianoKey(1, 60, 1, 0, 600.0, 1),
+  new PianoKey(2, 61, 0, 0, 200.0, 4),
   new PianoKey(3, 62, 0, 0, 450.0, 1),
   new PianoKey(4, 63, 1, 0, 450.0, 1),
   new PianoKey(5, 64, 0, 0, 350.0, 1),
-  new PianoKey(6, 65, 0, 0, 800.0, 3),
+  new PianoKey(6, 65, 0, 0, 800.0, 1),
   new PianoKey(7, 66, 0, 0, 200.0, 1),
   new PianoKey(8, 67, 1, 0, 300.0, 1),
   new PianoKey(9, 68, 0, 0, 350.0, 1),
@@ -118,7 +138,7 @@ PianoKey *pianoKeys[TOTAL_SENSORS] = {
   new PianoKey(12, 71, 1, 0, 400.0, 1),
   new PianoKey(13, 72, 0, 0, 500.0, 1),
   new PianoKey(14, 73, 0, 0, 400.0, 2),
-  new PianoKey(15, 74, 0, 0, 900.0, 3),
+  new PianoKey(15, 74, 0, 0, 200.0, 2),
 
   new PianoKey(0, 58, 0, 0, 300.0, 1),
   new PianoKey(1, 57, 1, 0, 600.0, 1),
@@ -129,11 +149,11 @@ PianoKey *pianoKeys[TOTAL_SENSORS] = {
   new PianoKey(6, 52, 0, 0, 350.0, 1),
   new PianoKey(7, 51, 0, 0, 300.0, 1),
   new PianoKey(8, 50, 1, 0, 300.0, 1),
-  new PianoKey(9, 49, 0, 0, 500.0, 8),
+  new PianoKey(9, 49, 0, 0, 500.0, 5),
   new PianoKey(10, 48, 0, 0, 300.0, 1),
-  new PianoKey(11, 47, 0, 0, 500.0, 8),
+  new PianoKey(11, 47, 0, 0, 500.0, 5),
   new PianoKey(12, 46, 1, 0, 400.0, 1),
-  new PianoKey(13, 45, 0, 0, 350.0, 6),
+  new PianoKey(13, 45, 0, 0, 350.0, 4),
 
 };
 
@@ -156,14 +176,14 @@ void setup() {
   pinMode(MUX3_PIN, OUTPUT);
   pinMode(SIG_PIN, INPUT);
 
-  pinMode(MUXB0_PIN, OUTPUT);
-  pinMode(MUXB1_PIN, OUTPUT);
-  pinMode(MUXB2_PIN, OUTPUT);
-  pinMode(MUXB3_PIN, OUTPUT);
-  pinMode(SIGB_PIN, INPUT);
+  pinMode(MUXC0_PIN, OUTPUT);
+  pinMode(MUXC1_PIN, OUTPUT);
+  pinMode(MUXC2_PIN, OUTPUT);
+  pinMode(MUXC3_PIN, OUTPUT);
+  pinMode(SIGC_PIN, INPUT);
 
 
-  if (!Wire.begin(14, 13)) {
+  if (!Wire.begin(7, 8)) {
     Log.info("Initializing Wire library error....." CR);
     while (1)
 
@@ -186,14 +206,9 @@ void setup() {
 
   lcd.init();
   lcd.backlight();
-
-  // // digitDisplay.init();
-  // // digitDisplay.setBrightness(5);
+  lcd.print("Hello");
 
   updateLCD();
-
-  fdDisplay.Init(0x70, 9);
-  fdDisplay.Text(0x70, "P256");
 
   current_micros = micros();
 
@@ -206,15 +221,12 @@ void setup() {
   amy_config.i2s_bclk = I2S_BCLK;
   amy_config.i2s_lrc = I2S_LRC;
   amy_config.i2s_dout = I2S_DIN;
-  amy_config.features.echo = 0;
-  amy_config.features.reverb = 1;
-  amy_config.features.chorus = 1;
+  amy_config.max_oscs = 512;
 
   amy_start(amy_config);
   amy_live_start();
 
   initialize_notes();
-  scanI2C();
   Log.info("Initialized!");
 }
 
@@ -255,17 +267,36 @@ void scanI2C() {
 }
 
 void initialize_notes() {
+
+  // amy_event e = amy_default_event();
+  // e.patch_number = 0;
+  // e.synth = 4;
+  // e.num_voices = SAMPLE_VOICES;
+  // amy_add_event(&e);
+
+  // e = amy_default_event();
+  // e.patch_number = 0;
+  // e.synth = 2;
+  // e.num_voices = SAMPLE_VOICES;
+  // amy_add_event(&e);
+
+  // e = amy_default_event();
+  // e.patch_number = 0;
+  // e.synth = 3;
+  // e.num_voices = SAMPLE_VOICES;
+  // amy_add_event(&e);
+
   amy_event e = amy_default_event();
   e.patch_number = current_patch;
   e.synth = 1;
   e.num_voices = numVoices;
   amy_add_event(&e);
+
+
 }
 
 void updateLCD() {
 
-  // int switchVal = mcp.digitalRead(10);
-  // Log.info("Switch Value is: %d " CR, switchVal);
 
   lcd.setCursor(0, 0);
   String space = "   ";
@@ -274,17 +305,6 @@ void updateLCD() {
   cp.concat(pn);
   cp.concat(space);
   lcd.print(cp);
-
-  // lcd.setCursor(0, 1);
-  // String kpStr = String();
-  // for(int i = 0; i < keyPresses.size(); i++) {
-  //   kpStr.concat(keyPresses[i]);
-  // }
-  // kpStr.concat(space);
-  // lcd.print(kpStr);
-
-
-//  digitDisplay.showNumberDec(current_patch, false);
 
   String fdS = "P";
   fdS.concat(current_patch);
@@ -298,7 +318,6 @@ void updateLCD() {
     Log.info("Current patch name: %s" CR, currentSynthName.c_str());
     lcd.setCursor(0, 1);
     lcd.print(currentSynthName);
-
   }
 }
 
@@ -332,55 +351,6 @@ void updatePatch(String value) {
 }
 
 
-void updateLogLevel(String value) {
-  int level = value.toInt();
-  if (level >= 0 && level <= 7) {
-    String levelNames[] = { "Silent", "Fatal", "Error", "Warning", "Info", "Notice", "Trace", "Verbose" };
-    String levelName = levelNames[level];
-    Log.setLevel(LOG_LEVEL_TRACE);
-    Log.trace("Setting log level to %d : %s" CR, level, levelName);
-    Log.setLevel(level);
-  } else {
-    int current_log_level = Log.getLevel();
-    Log.setLevel(LOG_LEVEL_ERROR);
-    Log.error("Log Level option %d not found.  Use an integer between 0 and 7" CR, level);
-    Log.setLevel(current_log_level);
-  }
-}
-
-void readSerial() {
-  if (Serial.available()) {                         // if there is data comming
-    String command = Serial.readStringUntil('\n');  // read string until newline character
-    char direction = command.charAt(0);
-    String subcommand = command.substring(1);
-    switch (direction) {
-      case 108:
-      case 76:
-        // 'l' or 'L'
-        updateLogLevel(subcommand);
-        break;
-      case 112:
-      case 80:
-        // 'p' or 'P'
-        updatePatch(subcommand);
-        break;
-      case 100:
-      case 68:
-        MODE = DRUM;
-        Log.info("Updated mode to drum" CR);
-        break;
-      case 110:
-      case 78:
-        MODE = NORMAL;
-        Log.info("Updated mode to normal" CR);
-        break;
-    }
-    //      int directionInt = direc;
-    Log.verbose("Read serial direction: %d command: %s" CR, direction, subcommand);
-  }
-}
-
-
 void updateKeyDebug() {
   String kpStr = String();
   while (keyPresses.size()) {
@@ -403,13 +373,25 @@ void readKeyboard() {
   keypad.tick();
   while (keypad.available()) {
     keypadEvent e = keypad.read();
-    //    Serial.print((char)e.bit.KEY);
-    //    if(e.bit.EVENT == KEY_JUST_PRESSED) Serial.println(" pressed");
-    //    else if(e.bit.EVENT == KEY_JUST_RELEASED) Serial.println(" released");
+    char k = (char)e.bit.KEY;
+    int ki = String(k).toInt();
+    if(e.bit.EVENT == KEY_JUST_PRESSED){
+      keysPressed.unshift(k);
+      if(keysPressedContains('A', '1')) startRecording(1);
+      if(keysPressedContains('A', '2')) startRecording(2);
+      if(keysPressedContains('A', '3')) startRecording(3);
+
+      if(keysPressedContains('B', '1')) startSample(1);
+      if(keysPressedContains('B', '2')) startSample(2);
+      if(keysPressedContains('B', '3')) startSample(3);
+
+
+    }
     if (e.bit.EVENT == KEY_JUST_RELEASED) {
 
-      char k = (char)e.bit.KEY;
-      Log.info("Switch on key pressed: %c" CR, k);
+ 
+      Log.info("Switch on key released: %c" CR, k);
+
       switch (k) {
         case 'E':
           updatePatchFromKeys();
@@ -417,10 +399,15 @@ void readKeyboard() {
         case 'D':
           updateKeyDebug();
           break;
+        case '#':
+          keyPresses.push(k);
+          stopRecording();
+          break;
         default:
           keyPresses.push(k);
           break;
       }
+      keysPressed.clear();
     }
     updateLCD();
   }
@@ -429,32 +416,154 @@ void readKeyboard() {
 void updateButtons() {
   readPiano();
 
-  if (keypadCounter++ > 50) {
-    readSerial();
+  if (keypadCounter++ > POTREAD_DELAY) {
     readKeyboard();
-//    readPots();
+    readPots();
+
     keypadCounter = 0;
+  }
+  loopSample();
+
+}
+
+void startRecording(int slot){
+  if(isRecording){
+    return;
+  }
+  isRecording = true;
+  Log.info("Started Recording" CR);
+  record = {millis()};
+  record.noteCount = 0;
+  record.isComplete = false;
+  record.patch = current_patch;
+  record.slot = slot;
+}
+
+void stopRecording() {
+  if(!isRecording){
+    return;
+  }
+  isRecording = false;
+  Log.info("Stopped Recording" CR);
+  record.msEnd = millis();
+  record.length = record.msEnd - record.msStart;
+  record.isComplete = true;
+  copyToSlot(&record, record.slot);
+}
+
+void loopSample(){
+  long now = millis();
+  for(int i = 0; i <NUM_SAMPLES; i++) {
+    Recording *sample = getSample(i+1); 
+    if(sample->isPlaying) {
+      if(now > sample->playbackStart + sample->length) {
+        Log.info("Ending sample playback %d " CR, sample->slot);
+        sample->isPlaying = false;
+
+//        startSample(sample->slot);
+      }
+    }    
   }
 }
 
+void startSample(int slot) {
+
+  Recording *sample = getSample(slot);
+
+  if(sample->isPlaying) return;
+  Log.info("Will start sample with slot: %d %d" CR, slot, sample->length);
+
+  amy_event e = amy_default_event();
+  e.patch_number = sample->patch;
+  e.synth = sample->slot+1;
+  e.num_voices = SAMPLE_VOICES;
+  amy_add_event(&e);
+
+  long now = amy_sysclock();
+
+  sample->isPlaying = true;
+  sample->playbackStart = millis();
+
+  for(int i = 0; i < sample->noteCount; i++) {
+    RecordedNote n = sample->notes[i];
+    amy_event e = amy_default_event();
+    int noteWithOctaveChange = noteFromOctave(n.baseNote, n.octave);
+    //e.velocity = play_velocity;
+    e.velocity = n.velocity;
+    e.volume = current_volume;
+    e.midi_note = noteWithOctaveChange;
+    e.synth = sample->slot+1;
+    e.eq_l = eq_l;
+    e.eq_m = eq_m;
+    e.eq_h = eq_h;
+    e.time = now + n.msStart;
+    amy_add_event(&e);
+
+    amy_event eEnd = amy_default_event();
+    eEnd.velocity = 0;
+    eEnd.midi_note = noteWithOctaveChange;
+    eEnd.synth = sample->slot+1;
+    eEnd.time = now + n.msStart + n.duration;
+    amy_add_event(&eEnd);
+  }
+
+
+}
+
+
 void playNote(byte note, float velocity) {
   float play_velocity = (velocity / MAX_PIANO_KEY_FORCE) * max_velocity;
-  Log.info("Playing note %d %F" CR, note, play_velocity);
+  int noteWithOctaveChange = noteFromOctave(note, octave);
+  //Log.info("Playing note %d %d %F" CR, note, noteWithOctaveChange, play_velocity);
   amy_event e = amy_default_event();
-  e.velocity = play_velocity;
+
+  //e.velocity = play_velocity;
+  e.velocity = 1;
   e.volume = current_volume;
-  e.midi_note = note;
+  e.midi_note = noteWithOctaveChange;
   e.synth = 1;
+  e.eq_l = eq_l;
+  e.eq_m = eq_m;
+  e.eq_h = eq_h;
   amy_add_event(&e);
+
+  if(isRecording) {
+    long playOffset = millis() - record.msStart;
+    RecordedNote n = { playOffset ,NULL,1.0, note, octave, false};
+    record.notes[record.noteCount] = n;
+    record.noteCount++;
+    Log.info("Recording note %d at index %d" CR, note, record.noteCount);
+  }
+
 }
 
 void stopNote(byte note) {
-  Log.info("Stopping note %d" CR, note);
+  int noteWithOctaveChange = noteFromOctave(note, octave);
+
+  //Log.info("Stopping note %d %d" CR, note, noteWithOctaveChange);
   amy_event e = amy_default_event();
   e.velocity = 0;
-  e.midi_note = note;
+  e.midi_note = noteWithOctaveChange;
   e.synth = 1;
   amy_add_event(&e);
+
+
+  if(isRecording) {
+    bool foundNoteToStop = false;
+    for(int i= 0; i < record.noteCount; i++) {
+      RecordedNote n = record.notes[i];
+      if(!n.complete && n.baseNote == note) {
+        foundNoteToStop = true;
+        n.duration = millis() - n.msStart - record.msStart;
+        n.complete = true;
+        Log.info("Ended note %d at index %d and duration %l and note started at %l" CR, note, i, n.duration, n.msStart);
+        record.notes[i] = n;
+      }
+    }
+    if(!foundNoteToStop) {
+      Log.info("Did not find note to stop: %d" CR, note);
+    }
+  }
 }
 
 void readPiano() {
@@ -476,7 +585,7 @@ void readPiano() {
       mux_b.channel(key->channel);
     }
 
-    pressure = map(analogRead(pinToRead), 0, 4095, 0, 20);
+    pressure = map(analogRead(pinToRead), 0, 3300, 0, 20);
 
     if (pressure != key->last_pressure) {
       byte old_state = key->state;
@@ -499,14 +608,86 @@ void readPiano() {
   }
 }
 
-int current_octave = 4;
+#define MAX_33V 3400
+
 void readPots() {
-  // mux_c.channel(0);
-  // int octave = map(analogRead(SIGC_PIN), 0, 4095, 0, 7);
-  // if(octave != current_octave) {
-  //   current_octave = octave;
-  //   Log.info("Changing octave to %d " CR, octave);
-  // }
+  mux_c.channel(0);
+
+  oct_avg.push(analogRead(SIGC_PIN));
+  int oavg = getAvg(oct_avg);
+  int oct = 2 - map(oavg, 0, MAX_33V, 0, 5);
+  if (oct != octave) {
+    octave = oct;
+    Log.info("Changing octave to %d %d" CR, octave, oavg);
+  }
+
+
+  mux_c.channel(1);
+  vol_avg.push(analogRead(SIGC_PIN));
+  float vavg = float(getAvg(vol_avg));
+
+  float v = 4.0 - (4.0 * (vavg / float(MAX_33V)));
+  if (v != current_volume) {
+    current_volume = v;
+  //  Log.info("Changing current Volume to %F" CR, current_volume);
+  }
+
+  mux_c.channel(2);
+  eql_avg.push(analogRead(SIGC_PIN));
+  float eqla = float(getAvg(eql_avg));
+  float eqaR = 15.0 - (30.0 * (eqla / float(MAX_33V)));
+
+  if(eqaR != eq_l) {
+    eq_l = eqaR;
+//    Log.info("Changing current eq to %F" CR, eq_l);
+  }
+
+
+  mux_c.channel(3);
+  eqm_avg.push(analogRead(SIGC_PIN));
+  float eqma = float(getAvg(eqm_avg));
+  float eqmR = 15.0 - (30.0 * (eqma / float(MAX_33V)));
+
+  if(eqmR != eq_m) {
+    eq_m = eqmR;
+//    Log.info("Changing current eq to %F" CR, eq_l);
+  }
+
+  mux_c.channel(4);
+  eqh_avg.push(analogRead(SIGC_PIN));
+  float eqha = float(getAvg(eqh_avg));
+  float eqhR = 15.0 - (30.0 * (eqha / float(MAX_33V)));
+
+  if(eqhR != eq_h) {
+    eq_h = eqhR;
+//    Log.info("Changing current eq to %F" CR, eq_l);
+  }
+
+}
+
+
+float getAvg(CircularBuffer<int, POTREAD_COUNT>& buffer) {
+  int avg = 0;
+  for(int i=0; i < POTREAD_COUNT; i++) {
+    avg+= buffer[i] / POTREAD_COUNT;
+  }
+  return avg;
+}
+
+bool keysPressedContains(char charA, char charB) {
+  bool foundA = false;
+  bool foundB = false;
+
+  for(int m=0; m < keysPressed.size(); m++) {
+    char n = keysPressed[m];
+    if(n ==  charA) {
+      foundA = true;
+    }
+    if(n == charB) {
+      foundB = true;
+    }
+  }
+  return foundA && foundB;
 }
 
 void loop() {
